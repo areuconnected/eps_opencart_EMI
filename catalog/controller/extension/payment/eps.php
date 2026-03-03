@@ -152,11 +152,11 @@ class ControllerExtensionPaymentEps extends Controller {
         return json_decode($result, true) ?? [];
     }
 
-        public function callback() {
+    public function callback() {
         $this->load->model('checkout/order');
         $this->load->model('extension/payment/eps');
 
-        // Clean query parameters (fixes &amp; issue)
+        // Clean query parameters (fixes &amp; issue from EPS)
         $get = [];
         foreach ($this->request->get as $key => $value) {
             $clean_key = str_replace('amp;', '', $key);
@@ -190,7 +190,7 @@ class ControllerExtensionPaymentEps extends Controller {
             $this->response->redirect($this->url->link('checkout/failure'));
         }
 
-        // V5 FIX: ALWAYS use merchantTransactionId for hash in Verify (this was the problem)
+        // Always use merchantTransactionId for hash (V5 requirement)
         $x_hash = $this->model_extension_payment_eps->generateXHash($merchant_tx_id, $hash_key);
 
         $headers = [
@@ -202,14 +202,13 @@ class ControllerExtensionPaymentEps extends Controller {
 
         $verify = $this->apiCall('GET', $verify_url, [], $headers);
 
-        // Log the exact response so we can debug if needed
-        $this->log->write('EPS VERIFY RESPONSE: ' . json_encode($verify));
-
         if (isset($verify['Status']) && strtoupper($verify['Status']) === 'SUCCESS') {
+            // Custom order comment (appears in order history + customer email)
             $comment = 'EPS Payment Successful | MerchantTx: ' . $merchant_tx_id;
             if (!empty($verify['EpsTransactionId'] ?? $get['EPSTransactionId'])) {
                 $comment .= ' | EPSTx: ' . ($verify['EpsTransactionId'] ?? $get['EPSTransactionId']);
             }
+            $comment .= "\n\nThank you for using EPS! Your payment has been received securely.";
 
             $this->model_checkout_order->addOrderHistory($order_id, 
                 $this->config->get('payment_eps_order_status_id'), 
