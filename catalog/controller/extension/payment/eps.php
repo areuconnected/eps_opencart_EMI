@@ -23,6 +23,7 @@ class ControllerExtensionPaymentEps extends Controller {
             return;
         }
 
+        // Auto switch between sandbox and live (V5 compliant)
         $sandbox   = $this->config->get('payment_eps_sandbox');
         $base_url  = $sandbox ? 'https://sandboxpgapi.eps.com.bd' : 'https://pgapi.eps.com.bd';
 
@@ -111,7 +112,7 @@ class ControllerExtensionPaymentEps extends Controller {
     }
 
     private function getEpsToken($base_url, $username, $password, $hash_key) {
-        // 15-minute cache to avoid sandbox rate limit
+        // 15-minute cache (prevents rate limit)
         if (isset($this->session->data['eps_token']) && (time() - ($this->session->data['eps_token_time'] ?? 0) < 900)) {
             return $this->session->data['eps_token'];
         }
@@ -189,7 +190,13 @@ class ControllerExtensionPaymentEps extends Controller {
             $this->response->redirect($this->url->link('checkout/failure'));
         }
 
-        $x_hash = $this->model_extension_payment_eps->generateXHash($merchant_tx_id, $hash_key);
+        // V5 improvement: Use EPSTransactionId for hash if available (official alternative)
+        $hash_data = $merchant_tx_id;
+        if (!empty($get['EPSTransactionId'])) {
+            $hash_data = $get['EPSTransactionId'];
+        }
+
+        $x_hash = $this->model_extension_payment_eps->generateXHash($hash_data, $hash_key);
 
         $headers = [
             'x-hash: ' . $x_hash,
@@ -200,12 +207,10 @@ class ControllerExtensionPaymentEps extends Controller {
 
         $verify = $this->apiCall('GET', $verify_url, [], $headers);
 
-        $debug = $this->config->get('payment_eps_debug');
-
         if (isset($verify['Status']) && strtoupper($verify['Status']) === 'SUCCESS') {
             $comment = 'EPS Payment Successful | MerchantTx: ' . $merchant_tx_id;
-            if (!empty($verify['EPSTransactionId'])) {
-                $comment .= ' | EPSTx: ' . $verify['EPSTransactionId'];
+            if (!empty($verify['EpsTransactionId'] ?? $get['EPSTransactionId'])) {
+                $comment .= ' | EPSTx: ' . ($verify['EpsTransactionId'] ?? $get['EPSTransactionId']);
             }
 
             $this->model_checkout_order->addOrderHistory($order_id, 
@@ -213,14 +218,11 @@ class ControllerExtensionPaymentEps extends Controller {
                 $comment, 
                 true);
 
-            if ($debug) $this->log->write('EPS SUCCESS - Order #' . $order_id . ' | ' . $merchant_tx_id);
-
             unset($this->session->data['eps_merchant_tx_id']);
             $this->response->redirect($this->url->link('checkout/success'));
         } else {
             $this->model_checkout_order->addOrderHistory($order_id, 10, 'EPS Failed/Cancelled', false);
             $this->session->data['error'] = 'Payment was not completed.';
-            if ($debug) $this->log->write('EPS FAILED - Order #' . $order_id);
             $this->response->redirect($this->url->link('checkout/failure'));
         }
     }
