@@ -14,14 +14,39 @@ class ControllerExtensionPaymentEps extends Controller {
             $this->response->redirect($this->url->link('marketplace/extension', 'user_token=' . $this->session->data['user_token'] . '&type=payment', true));
         }
 
-        // ... standard error/success messages (copy from any other payment like sslcommerz)
+        if (isset($this->error['warning'])) {
+            $data['error_warning'] = $this->error['warning'];
+        } else {
+            $data['error_warning'] = '';
+        }
 
-        $data['heading_title'] = $this->language->get('heading_title');
+        $data['breadcrumbs'] = [];
 
-        // Fields
-        $fields = ['payment_eps_hashkey', 'payment_eps_username', 'payment_eps_password', 'payment_eps_storeid',
-                   'payment_eps_sandbox', 'payment_eps_debug', 'payment_eps_total', 'payment_eps_order_status_id', 'payment_eps_geo_zone_id',
-                   'payment_eps_status', 'payment_eps_sort_order'];
+        $data['breadcrumbs'][] = [
+            'text' => $this->language->get('text_home'),
+            'href' => $this->url->link('common/dashboard', 'user_token=' . $this->session->data['user_token'], true)
+        ];
+
+        $data['breadcrumbs'][] = [
+            'text' => $this->language->get('text_extension'),
+            'href' => $this->url->link('marketplace/extension', 'user_token=' . $this->session->data['user_token'] . '&type=payment', true)
+        ];
+
+        $data['breadcrumbs'][] = [
+            'text' => $this->language->get('heading_title'),
+            'href' => $this->url->link('extension/payment/eps', 'user_token=' . $this->session->data['user_token'], true)
+        ];
+
+        $data['action'] = $this->url->link('extension/payment/eps', 'user_token=' . $this->session->data['user_token'], true);
+        $data['cancel'] = $this->url->link('marketplace/extension', 'user_token=' . $this->session->data['user_token'] . '&type=payment', true);
+
+        // All settings fields (including new Debug Mode)
+        $fields = [
+            'payment_eps_hashkey', 'payment_eps_username', 'payment_eps_password',
+            'payment_eps_storeid', 'payment_eps_sandbox', 'payment_eps_debug',
+            'payment_eps_total', 'payment_eps_order_status_id', 'payment_eps_geo_zone_id',
+            'payment_eps_status', 'payment_eps_sort_order'
+        ];
 
         foreach ($fields as $field) {
             if (isset($this->request->post[$field])) {
