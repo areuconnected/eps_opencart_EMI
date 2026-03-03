@@ -152,11 +152,11 @@ class ControllerExtensionPaymentEps extends Controller {
         return json_decode($result, true) ?? [];
     }
 
-    public function callback() {
+        public function callback() {
         $this->load->model('checkout/order');
         $this->load->model('extension/payment/eps');
 
-        // Clean query parameters (fixes &amp; issue from EPS)
+        // Clean query parameters (fixes &amp; issue)
         $get = [];
         foreach ($this->request->get as $key => $value) {
             $clean_key = str_replace('amp;', '', $key);
@@ -190,13 +190,8 @@ class ControllerExtensionPaymentEps extends Controller {
             $this->response->redirect($this->url->link('checkout/failure'));
         }
 
-        // V5 improvement: Use EPSTransactionId for hash if available (official alternative)
-        $hash_data = $merchant_tx_id;
-        if (!empty($get['EPSTransactionId'])) {
-            $hash_data = $get['EPSTransactionId'];
-        }
-
-        $x_hash = $this->model_extension_payment_eps->generateXHash($hash_data, $hash_key);
+        // V5 FIX: ALWAYS use merchantTransactionId for hash in Verify (this was the problem)
+        $x_hash = $this->model_extension_payment_eps->generateXHash($merchant_tx_id, $hash_key);
 
         $headers = [
             'x-hash: ' . $x_hash,
@@ -206,6 +201,9 @@ class ControllerExtensionPaymentEps extends Controller {
         $verify_url = $base_url . '/v1/EPSEngine/CheckMerchantTransactionStatus?merchantTransactionId=' . urlencode($merchant_tx_id);
 
         $verify = $this->apiCall('GET', $verify_url, [], $headers);
+
+        // Log the exact response so we can debug if needed
+        $this->log->write('EPS VERIFY RESPONSE: ' . json_encode($verify));
 
         if (isset($verify['Status']) && strtoupper($verify['Status']) === 'SUCCESS') {
             $comment = 'EPS Payment Successful | MerchantTx: ' . $merchant_tx_id;
