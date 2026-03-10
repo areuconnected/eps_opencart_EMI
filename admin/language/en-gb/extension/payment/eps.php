@@ -1,37 +1,29 @@
 <?php
 // Heading
-$_['heading_title'] = 'EPS Payment Gateway';
+$_['heading_title']         = 'EPS Payment Gateway (with EMI)';
 
 // Text
-$_['text_payment']     = 'Payment';
-$_['text_success']     = 'Success: You have modified EPS Payment module!';
-$_['text_edit']        = 'Edit EPS Payment Gateway';
-$_['text_enabled']     = 'Enabled';
-$_['text_disabled']    = 'Disabled';
-$_['text_all_zones']   = 'All Zones';
+$_['text_extension']        = 'Extensions';
+$_['text_success']          = 'Success: You have modified EPS payment module settings!';
+$_['text_edit']             = 'Edit EPS Payment Gateway';
+// This line allows OpenCart to display the EPS logo in the payment extension list
+$_['text_eps']              = '<a target="_blank" href="https://www.eps.com.bd/"><img src="view/image/payment/eps.png" alt="EPS Payment" title="EPS Payment" style="border: 1px solid #EEEEEE;" /></a>';
 
 // Entry
-$_['entry_hashkey']         = 'Hash Key';
-$_['entry_username']        = 'Username (Email)';
-$_['entry_password']        = 'Password';
-$_['entry_storeid']         = 'Store ID';
-$_['entry_sandbox']         = 'Sandbox Mode';
-$_['entry_total']           = 'Total';
-$_['entry_order_status']    = 'Success Order Status';
-$_['entry_geo_zone']        = 'Geo Zone';
 $_['entry_status']          = 'Status';
+$_['entry_test']            = 'Sandbox (Test Mode)';
+$_['entry_username']        = 'API Username';
+$_['entry_password']        = 'API Password';
+$_['entry_merchant_id']     = 'Merchant ID';
+$_['entry_store_id']        = 'Store ID';
+$_['entry_hashkey']         = 'Hash Key';
+$_['entry_order_status']    = 'Order Status (Success)';
 $_['entry_sort_order']      = 'Sort Order';
-$_['entry_title']           = 'Payment Title (optional)';
-
-// Help
-$_['help_total'] = 'The checkout total the order must reach before this payment method becomes active.';
 
 // Error
-$_['error_permission'] = 'Warning: You do not have permission to modify EPS Payment!';
-$_['error_hashkey']    = 'Hash Key Required!';
-$_['error_username']   = 'Username Required!';
-$_['error_password']   = 'Password Required!';
-$_['error_storeid']    = 'Store ID Required!';
-
-$_['entry_debug']       = 'Debug Mode';
-$_['help_debug']        = 'Enable to log detailed EPS API responses and errors (disable in production)';
+$_['error_permission']      = 'Warning: You do not have permission to modify EPS payment!';
+$_['error_username']        = 'API Username is required!';
+$_['error_password']        = 'API Password is required!';
+$_['error_merchant_id']     = 'Merchant ID is required!';
+$_['error_store_id']        = 'Store ID is required!';
+$_['error_hashkey']         = 'Hash Key is required!';
