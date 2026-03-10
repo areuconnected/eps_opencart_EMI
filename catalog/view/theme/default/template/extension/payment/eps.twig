@@ -1,42 +1,53 @@
-<div class="panel panel-default">
-  <div class="panel-heading">
-    <h4 class="panel-title">{{ text_title }}</h4>
-  </div>
-  <div class="panel-body">
-    <p>{{ text_description }}</p>
-    
-    <div class="text-right">
-      <button type="button" id="button-confirm" class="btn btn-primary btn-lg" data-loading-text="{{ text_loading }}">
-        <i class="fa fa-credit-card"></i> {{ button_confirm }}
-      </button>
+<div class="eps-payment-container" id="eps-payment-wrapper">
+  <fieldset>
+    <div class="form-group" style="margin-bottom: 20px;">
+      <div class="radio" style="display: inline-block; margin-right: 20px; cursor: pointer;">
+        <label style="cursor: pointer;">
+          <input type="radio" name="eps_payment_type" value="regular" checked="checked" class="eps-radio-trigger" />
+          Regular Payment
+        </label>
+      </div>
+      
+      {% if order_total >= 5000 %}
+      <div class="radio" style="display: inline-block; cursor: pointer;">
+        <label style="cursor: pointer;">
+          <input type="radio" name="eps_payment_type" value="emi" class="eps-radio-trigger" />
+          EMI Payment
+        </label>
+      </div>
+      {% endif %}
     </div>
+
+    <div id="eps-emi-container" style="display: none; padding: 15px; border: 1px solid #ddd; border-radius: 4px; margin-bottom: 15px; background: #f9f9f9;">
+      <div class="form-group">
+        <label class="control-label" for="eps_bank_id">Select Bank</label>
+        <select name="eps_bank_id" id="eps_bank_id" class="form-control" disabled>
+          <option value="">Loading banks...</option>
+        </select>
+      </div>
+
+      <div class="form-group" id="eps-tenure-group" style="display: none; margin-top:15px;">
+        <label class="control-label" for="eps_emi_month_id">Select EMI Tenure</label>
+        <select name="eps_emi_month_id" id="eps_emi_month_id" class="form-control">
+          <option value="">Select Tenure</option>
+        </select>
+      </div>
+    </div>
+  </fieldset>
+</div>
+
+<div class="buttons">
+  <div class="pull-right">
+    <input type="button" value="{{ button_confirm }}" id="button-confirm-eps" class="btn btn-primary" data-loading-text="{{ text_loading }}" />
   </div>
 </div>
 
-<script type="text/javascript"><!--
-$('#button-confirm').on('click', function() {
-    $.ajax({
-        url: 'index.php?route=extension/payment/eps/confirm',
-        type: 'post',
-        dataType: 'json',
-        beforeSend: function() {
-            $('#button-confirm').button('loading');
-        },
-        complete: function() {
-            $('#button-confirm').button('reset');
-        },
-        success: function(json) {
-            if (json['redirect']) {
-                location = json['redirect'];
-            }
-            
-            if (json['error']) {
-                alert(json['error']);
-            }
-        },
-        error: function(xhr, ajaxOptions, thrownError) {
-            alert(thrownError + "\r\n" + xhr.statusText + "\r\n" + xhr.responseText);
-        }
-    });
-});
-//--></script>
+<img src="data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==" 
+     onload="if(typeof window.epsEmiJsLoaded === 'undefined') { 
+                window.epsEmiJsLoaded = true; 
+                var script = document.createElement('script'); 
+                script.type = 'text/javascript'; 
+                script.src = 'catalog/view/javascript/eps_payment.js?v=' + new Date().getTime(); 
+                document.head.appendChild(script); 
+             }" 
+     style="display:none;" />
