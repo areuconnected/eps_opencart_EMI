@@ -251,7 +251,24 @@ class ControllerExtensionPaymentEps extends Controller {
 
             if (isset($verifyResponse['Status']) && strtolower($verifyResponse['Status']) == 'success') {
                 $success_status_id = $this->config->get('payment_eps_order_status_id');
-                $message = 'EPS Payment Successful. Transaction ID: ' . $verifyResponse['EpsTransactionId'];
+                
+                // Safely extract the Transaction ID using the Dev Team's recommended key first
+                $eps_trx_id = 'Unknown';
+                if (isset($verifyResponse['MerchantTransactionId']) && !empty($verifyResponse['MerchantTransactionId'])) {
+                    $eps_trx_id = $verifyResponse['MerchantTransactionId'];
+                } elseif (isset($verifyResponse['merchantTransactionId']) && !empty($verifyResponse['merchantTransactionId'])) {
+                    $eps_trx_id = $verifyResponse['merchantTransactionId'];
+                } elseif (isset($verifyResponse['epsTransactionId']) && !empty($verifyResponse['epsTransactionId'])) {
+                    $eps_trx_id = $verifyResponse['epsTransactionId'];
+                } elseif (isset($verifyResponse['EpsTransactionId']) && !empty($verifyResponse['EpsTransactionId'])) {
+                    $eps_trx_id = $verifyResponse['EpsTransactionId'];
+                } elseif (isset($verifyResponse['TransactionId']) && !empty($verifyResponse['TransactionId'])) {
+                    $eps_trx_id = $verifyResponse['TransactionId'];
+                } elseif (isset($verifyResponse['transactionId']) && !empty($verifyResponse['transactionId'])) {
+                    $eps_trx_id = $verifyResponse['transactionId'];
+                }
+
+                $message = 'EPS Payment Successful. Transaction ID: ' . $eps_trx_id;
                 
                 $this->model_checkout_order->addOrderHistory($order_id, $success_status_id, $message, true);
                 unset($this->session->data['eps_merchant_txn_id']);
