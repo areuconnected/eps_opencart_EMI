@@ -1,7 +1,9 @@
 <?php
 class ControllerExtensionPaymentEps extends Controller {
     
-    // Abstracted Token Fetcher
+    // -----------------------------------------
+    // 1. TOKEN GENERATOR
+    // -----------------------------------------
     private function getToken($is_emi = false) {
         $username = $this->config->get('payment_eps_username');
         $password = $this->config->get('payment_eps_password');
@@ -24,6 +26,9 @@ class ControllerExtensionPaymentEps extends Controller {
         return $this->curlPost($baseUrl . 'Auth/GetToken', $payload, $xhash);
     }
 
+    // -----------------------------------------
+    // 2. CHECKOUT VIEW LOAD
+    // -----------------------------------------
     public function index() {
         $this->load->language('extension/payment/eps');
         $data['button_confirm'] = $this->language->get('button_confirm');
@@ -36,8 +41,12 @@ class ControllerExtensionPaymentEps extends Controller {
         return $this->load->view('extension/payment/eps', $data);
     }
 
+    // -----------------------------------------
+    // 3. GET EMI BANKS
+    // -----------------------------------------
     public function getBanks() {
-        $tokenData = json_decode($this->getToken(true), true);
+        $tokenDataRaw = $this->getToken(true);
+        $tokenData = json_decode($tokenDataRaw, true);
         
         if (isset($tokenData['token'])) {
             $storeId = $this->config->get('payment_eps_store_id');
@@ -53,13 +62,19 @@ class ControllerExtensionPaymentEps extends Controller {
             $response = $this->curlPost('https://emiapi.eps.com.bd/v1/EMI/BankList', $payload, $xhash, $tokenData['token']);
             $this->response->addHeader('Content-Type: application/json');
             $this->response->setOutput($response);
+        } else {
+            $this->log->write('EPS API Error (getBanks): Token generation failed. Response: ' . $tokenDataRaw);
         }
     }
 
+    // -----------------------------------------
+    // 4. GET EMI DETAILS
+    // -----------------------------------------
     public function getEmiDetails() {
         if (!isset($this->request->post['bank_id'])) return;
 
-        $tokenData = json_decode($this->getToken(true), true);
+        $tokenDataRaw = $this->getToken(true);
+        $tokenData = json_decode($tokenDataRaw, true);
         
         if (isset($tokenData['token'])) {
             $this->load->model('checkout/order');
@@ -72,7 +87,6 @@ class ControllerExtensionPaymentEps extends Controller {
             
             $amount = (float)$this->currency->format($order_info['total'], $order_info['currency_code'], $order_info['currency_value'], false);
 
-            // Sending BOTH productAmount (PDF) and totalAmount (Postman) to bypass their inconsistencies
             $payload = json_encode(array(
                 'merchantId' => $merchantId,
                 'storeId' => $storeId,
@@ -85,153 +99,189 @@ class ControllerExtensionPaymentEps extends Controller {
             $responseRaw = $this->curlPost('https://emiapi.eps.com.bd/v1/EMI/EmiDetails', $payload, $xhash, $tokenData['token']);
             $response = json_decode($responseRaw, true);
             
-            // Debug catcher
             if (!isset($response['EmiDetails'])) {
                 $response['debug_raw'] = $responseRaw;
                 $response['debug_payload'] = $payload;
+                $this->log->write('EPS API Error (getEmiDetails): ' . $responseRaw);
             }
 
             $this->response->addHeader('Content-Type: application/json');
             $this->response->setOutput(json_encode($response));
+        } else {
+            $this->log->write('EPS API Error (getEmiDetails): Token generation failed. Response: ' . $tokenDataRaw);
         }
     }
 
+    // -----------------------------------------
+    // 5. CONFIRM PAYMENT (SEND TO EPS)
+    // -----------------------------------------
     public function confirm() {
-               $json = array();
-        $is_emi = (isset($this->request->post['payment_type']) && $this->request->post['payment_type'] == 'emi');
+        $json = array();
         
-        $tokenData = json_decode($this->getToken($is_emi), true);
-
-        if (isset($tokenData['token'])) {
-            $this->load->model('checkout/order');
-            $order_info = $this->model_checkout_order->getOrder($this->session->data['order_id']);
-            
-            $merchantTxnId = uniqid('txn_') . $order_info['order_id'];
-            $hashKey = $this->config->get('payment_eps_hashkey');
-            $xhash = $this->generateHash($hashKey, $merchantTxnId);
-
-            $this->session->data['eps_merchant_txn_id'] = $merchantTxnId;
-            $this->session->data['eps_is_emi'] = $is_emi;
-
-            $total_amount = (float)$this->currency->format($order_info['total'], $order_info['currency_code'], $order_info['currency_value'], false);
-            $ip_address = isset($this->request->server['REMOTE_ADDR']) ? $this->request->server['REMOTE_ADDR'] : '127.0.0.1';
-
-            // Pad the Order ID to ensure it is between 5 and 15 characters (e.g. 129 becomes ORD-00129)
-            $safe_order_id = "ORD-" . str_pad($order_info['order_id'], 5, "0", STR_PAD_LEFT);
-            // Ensure it doesn't accidentally exceed 15 characters
-            $safe_order_id = substr($safe_order_id, 0, 15);
-
-            $payloadArray = array(
-                "storeId" => $this->config->get('payment_eps_store_id'),
-                "merchantTransactionId" => $merchantTxnId,
-                "CustomerOrderId" => $safe_order_id,
-                "transactionTypeId" => 1,
-                "financialEntityId" => 0,
-                "transitionStatusId" => 0,
-                "totalAmount" => $total_amount,
-                "ipAddress" => $ip_address,
-                "version" => "1",
-                "successUrl" => $this->url->link('extension/payment/eps/callback', 'status=success', true),
-                "failUrl" => $this->url->link('extension/payment/eps/callback', 'status=fail', true),
-                "cancelUrl" => $this->url->link('checkout/checkout', '', true),
-                "customerName" => $order_info['payment_firstname'] . ' ' . $order_info['payment_lastname'],
-                "customerEmail" => $order_info['email'],
-                "customerAddress" => $order_info['payment_address_1'],
-                "customerAddress2" => $order_info['payment_address_2'] ? $order_info['payment_address_2'] : "string",
-                "customerCity" => $order_info['payment_city'],
-                "customerState" => $order_info['payment_zone'],
-                "customerPostcode" => $order_info['payment_postcode'],
-                "customerCountry" => $order_info['payment_iso_code_2'],
-                "customerPhone" => $order_info['telephone'],
-                "shipmentName" => $order_info['shipping_firstname'] ? $order_info['shipping_firstname'] . ' ' . $order_info['shipping_lastname'] : "string",
-                "shipmentAddress" => $order_info['shipping_address_1'] ? $order_info['shipping_address_1'] : "string",
-                "shipmentAddress2" => "string",
-                "shipmentCity" => $order_info['shipping_city'] ? $order_info['shipping_city'] : "string",
-                "shipmentState" => $order_info['shipping_zone'] ? $order_info['shipping_zone'] : "string",
-                "shipmentPostcode" => $order_info['shipping_postcode'] ? $order_info['shipping_postcode'] : "string",
-                "shipmentCountry" => $order_info['shipping_iso_code_2'] ? $order_info['shipping_iso_code_2'] : "string",
-                "valueA" => "string",
-                "valueB" => "string",
-                "valueC" => "string",
-                "valueD" => "string",
-                "shippingMethod" => "string",
-                "noOfItem" => "1",
-                "productName" => "Order " . $order_info['order_id'],
-                "productProfile" => "string",
-                "productCategory" => "string"
-            );
-
-            if ($is_emi) {
-                $payloadArray['emiType'] = 1;
-                $payloadArray['bankId'] = (int)$this->request->post['bank_id'];
-                $payloadArray['emiMonthId'] = (int)$this->request->post['emi_month_id'];
-                
-                $endpoint = 'https://emiapi.eps.com.bd/v1/EMI/InitializeEPS';
-            } else {
-                $payloadArray = array("merchantId" => $this->config->get('payment_eps_merchant_id')) + $payloadArray;
-                
-                $is_test = $this->config->get('payment_eps_test');
-                $baseUrl = $is_test ? 'https://sandboxpgapi.eps.com.bd/v1/' : 'https://pgapi.eps.com.bd/v1/';
-                $endpoint = $baseUrl . 'EPSEngine/InitializeEPS';
+        try {
+            if (!isset($this->session->data['order_id'])) {
+                throw new Exception('Your session has expired or the order ID is missing. Please refresh the page and try again.');
             }
 
-            $ch = curl_init();
-            $headers = array(
-                'Content-Type: application/json',
-                'x-hash: ' . $xhash,
-                'Authorization: Bearer ' . $tokenData['token']
-            );
-            curl_setopt($ch, CURLOPT_URL, $endpoint);
-            curl_setopt($ch, CURLOPT_POST, 1);
-            curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($payloadArray));
-            curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-            curl_setopt($ch, CURLOPT_HTTPHEADER, $headers);
-            curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true); 
-            
-            $responseRaw = curl_exec($ch);
-            $curlError = curl_error($ch);
-            $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-            curl_close($ch);
+            $is_emi = (isset($this->request->post['eps_payment_type']) && $this->request->post['eps_payment_type'] == 'emi');
 
-            $response = json_decode($responseRaw, true);
+            $tokenDataRaw = $this->getToken($is_emi);
+            $tokenData = json_decode($tokenDataRaw, true);
 
-            if (isset($response['RedirectURL']) && !empty($response['RedirectURL'])) {
-                $json['redirect'] = $response['RedirectURL'];
-            } else {
-                $err = isset($response['ErrorMessage']) && !empty($response['ErrorMessage']) ? $response['ErrorMessage'] : 'Unknown API Error';
-                $json['error'] = 'EPS API Error: ' . $err;
+            if (isset($tokenData['token'])) {
+                $this->load->model('checkout/order');
+                $order_info = $this->model_checkout_order->getOrder($this->session->data['order_id']);
                 
-//                $json['debug_endpoint'] = $endpoint;
-//                $json['debug_payload'] = json_encode($payloadArray);
-//                $json['debug_raw_response'] = $responseRaw ? $responseRaw : 'EMPTY_RESPONSE_FROM_EPS';
-//                $json['debug_curl_error'] = $curlError ? $curlError : 'NO_CURL_ERROR';
-//                $json['debug_http_code'] = (string)$httpCode;
+                if (!$order_info) {
+                    throw new Exception('Could not retrieve order information from the database.');
+                }
+                
+                $prefix = $is_emi ? 'emi_' : 'txn_';
+                $merchantTxnId = uniqid($prefix) . $order_info['order_id'];
+                
+                $hashKey = $this->config->get('payment_eps_hashkey');
+                $xhash = $this->generateHash($hashKey, $merchantTxnId);
+
+                $this->session->data['eps_merchant_txn_id'] = $merchantTxnId;
+                $this->session->data['eps_is_emi'] = $is_emi;
+
+                $total_amount = (float)$this->currency->format($order_info['total'], $order_info['currency_code'], $order_info['currency_value'], false);
+                $ip_address = isset($this->request->server['REMOTE_ADDR']) ? $this->request->server['REMOTE_ADDR'] : '127.0.0.1';
+
+                $safe_order_id = "ORD-" . str_pad($order_info['order_id'], 5, "0", STR_PAD_LEFT);
+                $safe_order_id = substr($safe_order_id, 0, 15);
+
+                // Safe Data Extractors
+                $pay_first   = isset($order_info['payment_firstname']) ? $order_info['payment_firstname'] : '';
+                $pay_last    = isset($order_info['payment_lastname']) ? $order_info['payment_lastname'] : '';
+                $pay_addr1   = isset($order_info['payment_address_1']) ? $order_info['payment_address_1'] : 'N/A';
+                $pay_addr2   = !empty($order_info['payment_address_2']) ? $order_info['payment_address_2'] : 'N/A';
+                $pay_city    = isset($order_info['payment_city']) ? $order_info['payment_city'] : 'N/A';
+                $pay_zone    = isset($order_info['payment_zone']) ? $order_info['payment_zone'] : 'N/A';
+                $pay_post    = isset($order_info['payment_postcode']) ? $order_info['payment_postcode'] : '0000';
+                $pay_iso     = isset($order_info['payment_iso_code_2']) ? $order_info['payment_iso_code_2'] : 'BD';
+                
+                $ship_name   = !empty($order_info['shipping_firstname']) ? $order_info['shipping_firstname'] . ' ' . $order_info['shipping_lastname'] : trim($pay_first . ' ' . $pay_last);
+                $ship_addr   = !empty($order_info['shipping_address_1']) ? $order_info['shipping_address_1'] : $pay_addr1;
+                $ship_city   = !empty($order_info['shipping_city']) ? $order_info['shipping_city'] : $pay_city;
+                $ship_zone   = !empty($order_info['shipping_zone']) ? $order_info['shipping_zone'] : $pay_zone;
+                $ship_post   = !empty($order_info['shipping_postcode']) ? $order_info['shipping_postcode'] : $pay_post;
+                $ship_country= !empty($order_info['shipping_iso_code_2']) ? $order_info['shipping_iso_code_2'] : $pay_iso;
+
+                $payloadArray = array(
+                    "storeId" => $this->config->get('payment_eps_store_id'),
+                    "merchantTransactionId" => $merchantTxnId,
+                    "CustomerOrderId" => $safe_order_id,
+                    "transactionTypeId" => 1,
+                    "financialEntityId" => 0,
+                    "transitionStatusId" => 0,
+                    "totalAmount" => $total_amount,
+                    "ipAddress" => $ip_address,
+                    "version" => "1",
+                    "successUrl" => $this->url->link('extension/payment/eps/callback', 'status=success', true),
+                    "failUrl" => $this->url->link('extension/payment/eps/callback', 'status=fail', true),
+                    "cancelUrl" => $this->url->link('checkout/checkout', '', true),
+                    "customerName" => trim($pay_first . ' ' . $pay_last),
+                    "customerEmail" => !empty($order_info['email']) ? $order_info['email'] : 'no-email@provided.com',
+                    "customerAddress" => $pay_addr1,
+                    "customerAddress2" => $pay_addr2,
+                    "customerCity" => $pay_city,
+                    "customerState" => $pay_zone,
+                    "customerPostcode" => $pay_post,
+                    "customerCountry" => $pay_iso,
+                    "customerPhone" => !empty($order_info['telephone']) ? $order_info['telephone'] : '00000000000',
+                    "shipmentName" => trim($ship_name),
+                    "shipmentAddress" => $ship_addr,
+                    "shipmentAddress2" => "N/A",
+                    "shipmentCity" => $ship_city,
+                    "shipmentState" => $ship_zone,
+                    "shipmentPostcode" => $ship_post,
+                    "shipmentCountry" => $ship_country,
+                    "valueA" => "string",
+                    "valueB" => "string",
+                    "valueC" => "string",
+                    "valueD" => "string",
+                    "shippingMethod" => "string",
+                    "noOfItem" => "1",
+                    "productName" => "Order " . $order_info['order_id'],
+                    "productProfile" => "string",
+                    "productCategory" => "string"
+                );
+
+                if ($is_emi) {
+                    $payloadArray['emiType'] = 1;
+                    $payloadArray['bankId'] = (int)$this->request->post['bank_id'];
+                    $payloadArray['emiMonthId'] = (int)$this->request->post['emi_month_id'];
+                    
+                    $endpoint = 'https://emiapi.eps.com.bd/v1/EMI/InitializeEPS';
+                } else {
+                    $payloadArray = array("merchantId" => $this->config->get('payment_eps_merchant_id')) + $payloadArray;
+                    
+                    $is_test = $this->config->get('payment_eps_test');
+                    $baseUrl = $is_test ? 'https://sandboxpgapi.eps.com.bd/v1/' : 'https://pgapi.eps.com.bd/v1/';
+                    $endpoint = $baseUrl . 'EPSEngine/InitializeEPS';
+                }
+
+                $responseRaw = $this->curlPost($endpoint, json_encode($payloadArray), $xhash, $tokenData['token']);
+                $response = json_decode($responseRaw, true);
+
+                if (isset($response['RedirectURL']) && !empty($response['RedirectURL'])) {
+                    $json['redirect'] = $response['RedirectURL'];
+                } else {
+                    $err = isset($response['ErrorMessage']) && !empty($response['ErrorMessage']) ? $response['ErrorMessage'] : 'Unknown API Error';
+                    $json['error'] = 'EPS API Error: ' . $err;
+                    $this->log->write('EPS Checkout Initialization Error: ' . $responseRaw);
+                }
+            } else {
+                $this->log->write('EPS Checkout Authentication Error: Token generation failed. Response: ' . $tokenDataRaw);
+                $json['error'] = 'Failed to securely authenticate with EPS Gateway. Please try again.';
             }
-        } else {
-            $json['error'] = 'Failed to authenticate with EPS Gateway.';
+
+        } catch (Exception $e) {
+            $error_message = 'FATAL PHP CRASH: ' . $e->getMessage() . ' on line ' . $e->getLine();
+            $json['error'] = $error_message;
+            $this->log->write($error_message);
         }
 
         $this->response->addHeader('Content-Type: application/json');
         $this->response->setOutput(json_encode($json));
     }
 
+    // -----------------------------------------
+    // 6. RETURN CALLBACK (VERIFICATION)
+    // -----------------------------------------
     public function callback() {
         $this->load->model('checkout/order');
         
-        if (!isset($this->session->data['order_id']) || !isset($this->session->data['eps_merchant_txn_id'])) {
+        $merchantTxnId = '';
+        if (isset($this->request->get['merchantTransactionId'])) {
+            $merchantTxnId = $this->request->get['merchantTransactionId'];
+        } elseif (isset($this->request->post['merchantTransactionId'])) {
+            $merchantTxnId = $this->request->post['merchantTransactionId'];
+        } elseif (isset($this->session->data['eps_merchant_txn_id'])) {
+            $merchantTxnId = $this->session->data['eps_merchant_txn_id'];
+        }
+
+        if (empty($merchantTxnId)) {
+            $this->log->write('EPS Callback Fatal Error: No merchantTransactionId provided by the gateway.');
             $this->response->redirect($this->url->link('checkout/checkout', '', true));
         }
 
-        $order_id = $this->session->data['order_id'];
-        $merchantTxnId = $this->session->data['eps_merchant_txn_id'];
-        $is_emi = isset($this->session->data['eps_is_emi']) ? $this->session->data['eps_is_emi'] : false;
+        $order_id = substr($merchantTxnId, 17);
+        $is_emi = (strpos($merchantTxnId, 'emi_') === 0);
         
+        if (!$order_id) {
+            $this->log->write('EPS Callback Error: Could not extract Order ID from string: ' . $merchantTxnId);
+            $this->response->redirect($this->url->link('checkout/checkout', '', true));
+        }
+
         if (isset($this->request->get['status']) && $this->request->get['status'] == 'fail') {
             $this->model_checkout_order->addOrderHistory($order_id, 10, 'Payment failed or cancelled by user.', true);
             $this->response->redirect($this->url->link('checkout/failure', '', true));
         }
 
-        $tokenData = json_decode($this->getToken($is_emi), true);
+        $tokenDataRaw = $this->getToken($is_emi);
+        $tokenData = json_decode($tokenDataRaw, true);
 
         if (isset($tokenData['token'])) {
             $hashKey = $this->config->get('payment_eps_hashkey');
@@ -239,7 +289,6 @@ class ControllerExtensionPaymentEps extends Controller {
 
             $is_test = $this->config->get('payment_eps_test');
             
-            // Fix: The correct Verify path from Postman for EMI
             if ($is_emi) {
                 $endpoint = 'https://emiapi.eps.com.bd/v1/EMI/CheckMerchantTransactionStatus?merchantTransactionId=' . $merchantTxnId;
             } else {
@@ -247,12 +296,12 @@ class ControllerExtensionPaymentEps extends Controller {
                 $endpoint = $baseUrl . 'EPSEngine/CheckMerchantTransactionStatus?merchantTransactionId=' . $merchantTxnId;
             }
 
-            $verifyResponse = json_decode($this->curlGet($endpoint, $xhash, $tokenData['token']), true);
+            $verifyResponseRaw = $this->curlGet($endpoint, $xhash, $tokenData['token']);
+            $verifyResponse = json_decode($verifyResponseRaw, true);
 
             if (isset($verifyResponse['Status']) && strtolower($verifyResponse['Status']) == 'success') {
                 $success_status_id = $this->config->get('payment_eps_order_status_id');
                 
-                // Safely extract the Transaction ID using the Dev Team's recommended key first
                 $eps_trx_id = 'Unknown';
                 if (isset($verifyResponse['MerchantTransactionId']) && !empty($verifyResponse['MerchantTransactionId'])) {
                     $eps_trx_id = $verifyResponse['MerchantTransactionId'];
@@ -271,21 +320,27 @@ class ControllerExtensionPaymentEps extends Controller {
                 $message = 'EPS Payment Successful. Transaction ID: ' . $eps_trx_id;
                 
                 $this->model_checkout_order->addOrderHistory($order_id, $success_status_id, $message, true);
+                
                 unset($this->session->data['eps_merchant_txn_id']);
                 unset($this->session->data['eps_is_emi']);
 
                 $this->response->redirect($this->url->link('checkout/success', '', true));
             } else {
                 $error_msg = isset($verifyResponse['ErrorMessage']) && !empty($verifyResponse['ErrorMessage']) ? $verifyResponse['ErrorMessage'] : 'Transaction verification failed.';
+                $this->log->write('EPS Verification Failed for Order ' . $order_id . ' | Response: ' . $verifyResponseRaw);
                 $this->model_checkout_order->addOrderHistory($order_id, 10, 'EPS Verification Error: ' . $error_msg, true);
                 $this->response->redirect($this->url->link('checkout/failure', '', true));
             }
         } else {
+            $this->log->write('EPS Verification Auth Error: Token generation failed. Response: ' . $tokenDataRaw);
             $this->model_checkout_order->addOrderHistory($order_id, 10, 'EPS Error: Could not generate token for verification.', true);
             $this->response->redirect($this->url->link('checkout/failure', '', true));
         }
     }
 
+    // -----------------------------------------
+    // 7. UTILITY FUNCTIONS
+    // -----------------------------------------
     private function generateHash($key, $data) {
         $utf8Key = mb_convert_encoding($key, 'UTF-8');
         $hmac = hash_hmac('sha512', $data, $utf8Key, true);
@@ -302,8 +357,18 @@ class ControllerExtensionPaymentEps extends Controller {
         curl_setopt($ch, CURLOPT_POSTFIELDS, $payload);
         curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
         curl_setopt($ch, CURLOPT_HTTPHEADER, $headers);
-        curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
+        
+        // HARDENED SSL BYPASS
+        curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+        curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 0);
+        curl_setopt($ch, CURLOPT_TIMEOUT, 15);
+        
         $result = curl_exec($ch);
+        
+        if ($result === false) {
+            $this->log->write('EPS FATAL cURL ERROR (POST to ' . $url . '): ' . curl_error($ch));
+        }
+        
         curl_close($ch);
         return $result;
     }
@@ -317,8 +382,18 @@ class ControllerExtensionPaymentEps extends Controller {
         curl_setopt($ch, CURLOPT_HTTPGET, 1);
         curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
         curl_setopt($ch, CURLOPT_HTTPHEADER, $headers);
-        curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
+        
+        // HARDENED SSL BYPASS
+        curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+        curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 0);
+        curl_setopt($ch, CURLOPT_TIMEOUT, 15);
+        
         $result = curl_exec($ch);
+        
+        if ($result === false) {
+            $this->log->write('EPS FATAL cURL ERROR (GET to ' . $url . '): ' . curl_error($ch));
+        }
+        
         curl_close($ch);
         return $result;
     }
